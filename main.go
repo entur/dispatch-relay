@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const userAgent = "dispatch-relay (+https://github.com/henrik242/dispatch-relay)"
+const userAgent = "dispatch-relay (+https://github.com/entur/dispatch-relay)"
 
 var (
 	targetRE   = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)

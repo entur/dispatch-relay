@@ -1,4 +1,4 @@
-module github.com/henrik242/dispatch-relay
+module github.com/entur/dispatch-relay
 
 go 1.27.2
 
