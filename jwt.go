@@ -23,22 +23,22 @@ var shaRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // See https://docs.github.com/en/actions/reference/security/oidc
 type claims struct {
-	Iss               string          `json:"iss"`
-	Aud               json.RawMessage `json:"aud"`
-	Exp               int64           `json:"exp"`
-	Nbf               int64           `json:"nbf"`
-	Iat               int64           `json:"iat"`
-	Repository        string          `json:"repository"`
-	RepositoryID      string          `json:"repository_id"`
-	RepositoryOwnerID string          `json:"repository_owner_id"`
-	Ref               string          `json:"ref"`
-	RefType           string          `json:"ref_type"`
-	SHA               string          `json:"sha"`
-	EventName         string          `json:"event_name"`
-	WorkflowRef       string          `json:"workflow_ref"`
-	RunnerEnvironment string          `json:"runner_environment"`
-	RunID             string          `json:"run_id"`
-	RunAttempt        string          `json:"run_attempt"`
+	Iss               string `json:"iss"`
+	Aud               string `json:"aud"`
+	Exp               int64  `json:"exp"`
+	Nbf               int64  `json:"nbf"`
+	Iat               int64  `json:"iat"`
+	Repository        string `json:"repository"`
+	RepositoryID      string `json:"repository_id"`
+	RepositoryOwnerID string `json:"repository_owner_id"`
+	Ref               string `json:"ref"`
+	RefType           string `json:"ref_type"`
+	SHA               string `json:"sha"`
+	EventName         string `json:"event_name"`
+	WorkflowRef       string `json:"workflow_ref"`
+	RunnerEnvironment string `json:"runner_environment"`
+	RunID             string `json:"run_id"`
+	RunAttempt        string `json:"run_attempt"`
 }
 
 type verifier struct {
@@ -92,8 +92,8 @@ func (v *verifier) check(c *claims) error {
 	switch {
 	case c.Iss != v.issuer:
 		return reject("iss %q", c.Iss)
-	case !audienceIs(c.Aud, v.audience):
-		return reject("aud %s", c.Aud)
+	case c.Aud != v.audience:
+		return reject("aud %q", c.Aud)
 	case c.Exp == 0 || now > c.Exp+leeway:
 		return reject("expired")
 	case c.Nbf > now+leeway, c.Iat > now+leeway:
@@ -106,30 +106,21 @@ func (v *verifier) check(c *claims) error {
 		return reject("runner_environment %q", c.RunnerEnvironment)
 	case !shaRE.MatchString(c.SHA):
 		return reject("sha %q", c.SHA)
-	case c.RepositoryID == "" || c.Repository == "" || c.RunID == "":
+	case c.RepositoryID == "" || c.Repository == "" || c.RunID == "" || c.RunAttempt == "":
 		return reject("missing claims")
 	}
 	return nil
 }
 
-// aud may be a string or a single-element array.
-func audienceIs(raw json.RawMessage, want string) bool {
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s == want
-	}
-	var a []string
-	return json.Unmarshal(raw, &a) == nil && len(a) == 1 && a[0] == want
-}
-
-// key refetches the JWKS on an unknown kid, at most once a minute.
+// key refetches the JWKS hourly, and on an unknown kid at most once a minute.
 func (v *verifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if k, ok := v.keys[kid]; ok {
+	age := v.now().Sub(v.fetched)
+	if k, ok := v.keys[kid]; ok && age < time.Hour {
 		return k, nil
 	}
-	if v.keys != nil && v.now().Sub(v.fetched) < time.Minute {
+	if v.keys != nil && age < time.Minute {
 		return nil, reject("unknown kid %q", kid)
 	}
 	keys, err := v.fetchKeys(ctx)
@@ -144,12 +135,6 @@ func (v *verifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) 
 }
 
 func (v *verifier) fetchKeys(ctx context.Context) (map[string]*rsa.PublicKey, error) {
-	var disc struct {
-		JWKSURI string `json:"jwks_uri"`
-	}
-	if err := getJSON(ctx, v.client, v.issuer+"/.well-known/openid-configuration", &disc); err != nil {
-		return nil, err
-	}
 	var set struct {
 		Keys []struct {
 			Kty string `json:"kty"`
@@ -158,7 +143,7 @@ func (v *verifier) fetchKeys(ctx context.Context) (map[string]*rsa.PublicKey, er
 			E   string `json:"e"`
 		} `json:"keys"`
 	}
-	if err := getJSON(ctx, v.client, disc.JWKSURI, &set); err != nil {
+	if err := getJSON(ctx, v.client, v.issuer+"/.well-known/jwks", &set); err != nil {
 		return nil, err
 	}
 	keys := map[string]*rsa.PublicKey{}

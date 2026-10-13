@@ -49,8 +49,16 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.tokenReqs = append(f.tokenReqs, body)
 		writeJSON(w, 201, map[string]string{"token": "ghs_test"})
 	case "GET /repos/henrik242/dispatch-demo-deploy/contents/.github/dispatch-sources.yml":
+		if r.Header.Get("Authorization") != "Bearer ghs_test" {
+			http.Error(w, "", http.StatusUnauthorized)
+			return
+		}
 		_, _ = io.WriteString(w, testManifest)
 	case "POST /repos/henrik242/dispatch-demo-deploy/actions/workflows/deploy.yml/dispatches":
+		if r.Header.Get("Authorization") != "Bearer ghs_test" {
+			http.Error(w, "", http.StatusUnauthorized)
+			return
+		}
 		_ = json.NewDecoder(r.Body).Decode(&f.dispatch)
 		writeJSON(w, 200, map[string]any{"workflow_run_id": 1, "html_url": "https://github.com/run/1"})
 	default:
@@ -84,12 +92,8 @@ func setup(t *testing.T) (*httptest.Server, *fakeGitHub, *rsa.PrivateKey, string
 	oidcKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	appKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 
-	var issuer *httptest.Server
-	issuer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/openid-configuration":
-			writeJSON(w, 200, map[string]string{"jwks_uri": issuer.URL + "/jwks"})
-		case "/jwks":
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/jwks" {
 			b64 := base64.RawURLEncoding.EncodeToString
 			writeJSON(w, 200, map[string]any{"keys": []map[string]string{{
 				"kty": "RSA", "kid": "k1",
@@ -149,17 +153,15 @@ func TestDispatchAllowed(t *testing.T) {
 		inputs["source_run_url"] != "https://github.com/henrik242/dispatch-demo-app/actions/runs/100/attempts/1" {
 		t.Errorf("inputs %v", inputs)
 	}
-	want := []string{`{"single_file":"read"}`, `{"actions":"write"}`}
-	if len(gh.tokenReqs) != len(want) {
+	if len(gh.tokenReqs) != 1 {
 		t.Fatalf("token requests %v", gh.tokenReqs)
 	}
-	for i, tr := range gh.tokenReqs {
-		if got := toJSON(tr["permissions"]); got != want[i] {
-			t.Errorf("token %d permissions %s, want %s", i, got, want[i])
-		}
-		if toJSON(tr["repositories"]) != `["dispatch-demo-deploy"]` {
-			t.Errorf("token %d repositories %v", i, tr["repositories"])
-		}
+	tr := gh.tokenReqs[0]
+	if got := toJSON(tr["permissions"]); got != `{"actions":"write","single_file":"read"}` {
+		t.Errorf("token permissions %s", got)
+	}
+	if got := toJSON(tr["repositories"]); got != `["dispatch-demo-deploy"]` {
+		t.Errorf("token repositories %s", got)
 	}
 }
 
@@ -167,9 +169,14 @@ func TestDispatchRejected(t *testing.T) {
 	cases := map[string]struct {
 		mutate     func(c map[string]any)
 		header     map[string]string
+		forged     bool
 		body       string
 		reachesAPI bool
 	}{
+		"forged signature": {forged: true},
+		"wrong issuer":     {mutate: func(c map[string]any) { c["iss"] = "https://example.com" }},
+		"issued in future": {mutate: func(c map[string]any) { c["iat"] = now.Unix() + 300 }},
+		"bad sha":          {mutate: func(c map[string]any) { c["sha"] = "abc" }},
 		"wrong audience":   {mutate: func(c map[string]any) { c["aud"] = "https://github.com/entur" }},
 		"expired":          {mutate: func(c map[string]any) { c["exp"] = now.Unix() - 120 }},
 		"wrong owner":      {mutate: func(c map[string]any) { c["repository_owner_id"] = "1" }},
@@ -204,6 +211,9 @@ func TestDispatchRejected(t *testing.T) {
 			body := tc.body
 			if body == "" {
 				body = reqBody
+			}
+			if tc.forged {
+				key, _ = rsa.GenerateKey(rand.Reader, 2048)
 			}
 			tok, _ := signRS256(key, hdr, c)
 

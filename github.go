@@ -74,7 +74,8 @@ func (g *githubApp) installationToken(ctx context.Context, installation int64, r
 		Token string `json:"token"`
 	}
 	path := fmt.Sprintf("/app/installations/%d/access_tokens", installation)
-	return out.Token, g.call(ctx, http.MethodPost, path, jwt, "", in, &out)
+	err = g.call(ctx, http.MethodPost, path, jwt, "", in, &out)
+	return out.Token, err
 }
 
 func (g *githubApp) readFile(ctx context.Context, token, owner, repo, path string) ([]byte, error) {

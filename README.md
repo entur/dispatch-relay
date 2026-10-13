@@ -1,72 +1,75 @@
 # dispatch-relay
 
-MVP of the OIDC dispatch relay from `dispatch-app-plan.md` (geocoder-pipeline). A public repo's workflow sends its
-GitHub OIDC token; the relay verifies it, checks the target repo's `.github/dispatch-sources.yml`, and dispatches the
-target workflow as a GitHub App with `inputs.sha` and `inputs.source_run_url` taken from the token.
+Lets a public repo trigger a deploy workflow in a private repo without a secret. The source workflow sends its
+GitHub OIDC token; the relay verifies it, checks the target's `.github/dispatch-sources.yml`, and dispatches the
+target workflow as a GitHub App, with `sha` and `source_run_url` taken from the token. The design and threat model
+are in [docs/design.md](docs/design.md).
 
-The GitHub App and the demo repos live in a personal account, so no org app is involved:
+| Repo | Role |
+|---|---|
+| `entur/dispatch-relay` | this service |
+| `entur/dispatch-relay-deployment-config` | GCP project, deploy script, plan |
+| `henrik242/dispatch-demo-app` | demo source: `build.yml` triggers, `probe.yml` exercises rejections |
+| `henrik242/dispatch-demo-deploy` | demo target: `deploy.yml` and the allowlist |
 
-| Repo | Visibility | Role |
-|---|---|---|
-| `entur/dispatch-relay` | public | this service |
-| `entur/dispatch-relay-deployment-config` | private | GCP manifests and deploy script |
-| `henrik242/dispatch-demo-app` | public | source, `build.yml` calls the relay |
-| `henrik242/dispatch-demo-deploy` | private | target, `deploy.yml` plus the allowlist |
+## Onboard a repo
 
-## Setup
+**Target** (`<app>-deployment-config`):
+1. Add `.github/dispatch-sources.yml` to the default branch. See the demo target's file for the commented format;
+   get the source's `repository_id` with `gh api repos/<owner>/<repo> --jq .id`.
+2. Declare both `workflow_dispatch` inputs, `sha` and `source_run_url`. GitHub rejects the dispatch with 422 if
+   either is missing.
+3. Fail the run if `sha` is not on the source's `main`, as the demo's `deploy.yml` does.
+4. Ask an org owner to add the repo to the app installation.
 
-1. Create the demo repos and push:
-   ```sh
-   gh repo create henrik242/dispatch-demo-app --public --source ../dispatch-demo-app --push
-   gh repo create henrik242/dispatch-demo-deploy --private --source ../dispatch-demo-deploy --push
-   ```
-2. Set `repository_id` in `dispatch-demo-deploy/.github/dispatch-sources.yml` to
-   `gh api repos/henrik242/dispatch-demo-app --jq .id` and push.
-3. Create a GitHub App under Settings > Developer settings > GitHub Apps > New GitHub App:
+**Source:** add a job after the tests, with `id-token: write` on that job only. `shell: bash` is needed, so a
+failed call fails the step:
 
-   | Field | Value |
-   |---|---|
-   | GitHub App name | `dispatch-relay`, or with a suffix if taken (names are global) |
-   | Description | Optional, e.g. "Dispatch relay demo" |
-   | Homepage URL | `https://github.com/entur/dispatch-relay` |
-   | Redirect URI | Empty. The relay never acts as a user. |
-   | Allow wildcard matching | Off |
-   | Expire user authorization tokens | No effect without user authorization; leave as is |
-   | Request user authorization (OAuth) during installation | Off |
-   | Enable Device Flow | Off |
-   | Setup URL | Empty |
-   | Redirect on update | Off |
-   | Webhook: Active | Off. URL and secret then stay empty. |
-   | Repository permissions | Actions: Read and write. Single file: Read, path `.github/dispatch-sources.yml`. Metadata: Read (mandatory). Everything else: No access. |
-   | Organization permissions | None |
-   | Account permissions | None |
-   | Enterprise permissions | None |
-   | Subscribe to events | None (greyed out with the webhook off) |
-   | Where can this GitHub App be installed? | Only on this account |
+```yaml
+  trigger-deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && github.repository_owner == 'entur'
+    needs: [test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+    steps:
+      - shell: bash
+        run: |
+          jwt=$(curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=entur-dispatch-relay" | jq -r .value)
+          curl -sSf -X POST -H "Authorization: Bearer $jwt" -H "User-Agent: entur-dispatch-$GITHUB_REPOSITORY" \
+            -d '{"target":"entur/<app>-deployment-config","workflow":"deploy.yml"}' \
+            https://<relay>/v1/dispatch | jq -r '"Deploy run: \(.run_url)"' >> "$GITHUB_STEP_SUMMARY"
+```
 
-   After creating it:
-   - Note the App ID; the relay accepts either the App ID or the Client ID as `GITHUB_APP_ID`.
-   - Under "Private keys", click "Generate a private key". This downloads a `.pem` that the relay uses to sign
-     its app JWTs; the deploy script uploads it to Secret Manager. Store it outside the repos so it can't be
-     committed or uploaded with the source.
-   - Skip "Generate a new client secret". Client secrets are for user sign-in (OAuth), which the relay doesn't do.
-   - Install App > Only select repositories > `dispatch-demo-deploy`.
-4. Deploy the relay; see `entur/dispatch-relay-deployment-config`. It prints the service URL.
-5. `gh variable set DISPATCH_RELAY_URL -R henrik242/dispatch-demo-app -b <url>`
-6. Push to `dispatch-demo-app` main. The run summary links the deploy run.
+**A 403** carries no reason. Find it in the relay's log by the source run id:
+`gcloud logging read 'jsonPayload.run_id="<run id>"' --project <relay project>`, or ask team-ror.
 
-The relay logs one line per request with the decision and reason.
+## GitHub App
 
-## Things to try
+Create it under Settings > Developer settings > GitHub Apps. Everything not listed stays at GitHub's defaults
+(off, empty or no access):
 
-- Change a source field in the manifest (ref, workflow, id), push to the app: 403, reason in the log.
-- Run the app workflow from a branch or a PR: no trigger job, or 403.
-- Uninstall the app from the target: 403 `app not installed`.
-- Dispatch by hand with an older SHA that is not on main: the deploy run fails its SHA check.
+| Field | Value |
+|---|---|
+| Webhook: Active | Off |
+| Repository permissions | Actions: Read and write. Single file: Read, path `.github/dispatch-sources.yml`. Metadata: Read. |
+| Where can it be installed? | Only on this account |
 
-## Not in the MVP
+Then:
+- Generate a private key, and note the Client ID. The relay accepts the Client ID or App ID as `GITHUB_APP_ID`.
+  No client secret is needed.
+- Install the app on the target repos only.
+- The `.pem` goes to Secret Manager via `deploy.sh` in `dispatch-relay-deployment-config`. Delete the local
+  copy afterwards.
 
-Load balancer and hostname, Terraform, alerts and uptime check, per-source rate limiting, KMS signing.
+## Demo
+
+The demo repos and a personal app run against the relay in `ent-dispatch-dev`; the relay URL is the demo app's
+`DISPATCH_RELAY_URL` variable.
+- A push to `dispatch-demo-app` main deploys, and the run summary links the deploy run.
+- `gh workflow run probe.yml -R henrik242/dispatch-demo-app` shows a rejection, with the reason in the log.
 
 ## Development
 

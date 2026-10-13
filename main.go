@@ -52,8 +52,10 @@ func (a *audit) attrs() []any {
 }
 
 func (s *server) handleDispatch(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
 	var a audit
-	err := s.dispatch(r, &a)
+	err := s.dispatch(r.WithContext(ctx), &a)
 	var rej *rejection
 	switch {
 	case err == nil:
@@ -89,17 +91,17 @@ func (s *server) dispatch(r *http.Request, a *audit) error {
 	}
 
 	c, err := s.verifier.verify(ctx, token)
+	a.c = c // set when the signature is valid, so denials are traceable
 	if err != nil {
 		return err
 	}
-	a.c = c
 
 	owner, repo, _ := strings.Cut(req.Target, "/")
 	inst, err := s.gh.installationID(ctx, owner, repo)
 	if err != nil {
 		return err
 	}
-	tok, err := s.gh.installationToken(ctx, inst, repo, map[string]string{"single_file": "read"})
+	tok, err := s.gh.installationToken(ctx, inst, repo, map[string]string{"single_file": "read", "actions": "write"})
 	if err != nil {
 		return err
 	}
@@ -116,10 +118,6 @@ func (s *server) dispatch(r *http.Request, a *audit) error {
 		return err
 	}
 
-	tok, err = s.gh.installationToken(ctx, inst, repo, map[string]string{"actions": "write"})
-	if err != nil {
-		return err
-	}
 	inputs := map[string]string{
 		"sha":            c.SHA,
 		"source_run_url": fmt.Sprintf("https://github.com/%s/actions/runs/%s/attempts/%s", c.Repository, c.RunID, c.RunAttempt),
@@ -137,9 +135,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func newMux(s *server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/dispatch", s.handleDispatch)
-	mux.HandleFunc("GET /health/liveness", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	mux.HandleFunc("GET /health/liveness", func(http.ResponseWriter, *http.Request) {})
 	return mux
 }
 
@@ -207,15 +203,19 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdown)
-	}()
+	errc := make(chan error, 1)
+	go func() { errc <- srv.ListenAndServe() }()
 	log.Info("listening", "addr", srv.Addr)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	select {
+	case err := <-errc:
 		log.Error("serve", "err", err)
 		os.Exit(1)
+	case <-ctx.Done():
+	}
+	// Cloud Run allows 10 s after SIGTERM.
+	shutdown, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdown); err != nil {
+		log.Error("shutdown", "err", err)
 	}
 }
