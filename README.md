@@ -9,7 +9,7 @@ are in [docs/design.md](docs/design.md).
 |---|---|
 | `entur/dispatch-relay` | this service |
 | `entur/dispatch-relay-deployment-config` | GCP project, deploy script, plan |
-| `henrik242/dispatch-demo-app` | demo source: `build.yml` triggers, `probe.yml` exercises rejections |
+| `entur/dispatch-demo-app` | demo source: `build.yml` triggers, `probe.yml` exercises rejections |
 | `henrik242/dispatch-demo-deploy` | demo target: `deploy.yml` and the allowlist |
 
 ## Onboard a repo
@@ -66,7 +66,7 @@ Then:
 The demo repos and a personal app run against the relay in `ent-dispatch-dev`; the relay URL is the demo app's
 `DISPATCH_RELAY_URL` variable.
 - A push to `dispatch-demo-app` main deploys, and the run summary links the deploy run.
-- `gh workflow run probe.yml -R henrik242/dispatch-demo-app` shows a rejection, with the reason in the log.
+- `gh workflow run probe.yml -R entur/dispatch-demo-app` shows a rejection, with the reason in the log.
 
 ## Development
 
