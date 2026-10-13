@@ -5,6 +5,19 @@ GitHub OIDC token; the relay verifies it, checks the target's `.github/dispatch-
 target workflow as a GitHub App, with `sha` and `source_run_url` taken from the token. The design and threat model
 are in [docs/design.md](docs/design.md).
 
+```mermaid
+flowchart TD
+    A[Push to main in the public source repo] --> B[Tests pass]
+    B --> C[trigger-deploy job gets a GitHub OIDC token]
+    C -->|POST /v1/dispatch with token, target, workflow| D{Relay: token valid?}
+    D -->|no| X[403, reason in the relay log]
+    D -->|yes| E[Relay reads .github/dispatch-sources.yml in the target repo]
+    E --> F{Source listed? repo, workflow, branch, event}
+    F -->|no| X
+    F -->|yes| G[Relay starts the target workflow as the GitHub App, with sha and source_run_url]
+    G --> H[Target checks the SHA is on the source main, then deploys]
+```
+
 | Repo | Role |
 |---|---|
 | `entur/dispatch-relay` | this service |
