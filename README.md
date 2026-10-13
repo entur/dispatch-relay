@@ -64,11 +64,6 @@ The relay logs one line per request with the decision and reason.
 - Uninstall the app from the target: 403 `app not installed`.
 - Dispatch by hand with an older SHA that is not on main: the deploy run fails its SHA check.
 
-## Open checks
-
-- Whether the Single file permission covers the Contents API read. If the manifest read gets 403, switch the app to
-  Contents read and change `single_file` in `main.go`.
-
 ## Not in the MVP
 
 Load balancer and hostname, Terraform, alerts and uptime check, per-source rate limiting, KMS signing.
