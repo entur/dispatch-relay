@@ -7,15 +7,30 @@ are in [docs/design.md](docs/design.md).
 
 ```mermaid
 flowchart TD
-    A[Push to main in the public source repo] --> B[Tests pass]
-    B --> C[trigger-deploy job gets a GitHub OIDC token]
-    C -->|POST /v1/dispatch with token, target, workflow| D{Relay: token valid?}
+    subgraph src["Source repo, public: entur/app"]
+        A[Push to main] --> B[Tests pass]
+        B --> C[trigger-deploy job gets a GitHub OIDC token]
+    end
+    subgraph relay["dispatch-relay, Cloud Run"]
+        D{Token valid?}
+        F{Source listed? repo, workflow, branch, event}
+    end
+    subgraph app["GitHub App: Actions write, Single file read"]
+        E[Read the allowlist]
+        G[Start the target workflow with sha and source_run_url]
+    end
+    subgraph tgt["Target repo, private: entur/app-deployment-config"]
+        M[(.github/dispatch-sources.yml)]
+        H[deploy.yml checks the SHA is on the source main, then deploys]
+    end
+    C -->|POST /v1/dispatch| D
     D -->|no| X[403, reason in the relay log]
-    D -->|yes| E[Relay reads .github/dispatch-sources.yml in the target repo]
-    E --> F{Source listed? repo, workflow, branch, event}
+    D -->|yes| E
+    E --> M
+    M --> F
     F -->|no| X
-    F -->|yes| G[Relay starts the target workflow as the GitHub App, with sha and source_run_url]
-    G --> H[Target checks the SHA is on the source main, then deploys]
+    F -->|yes| G
+    G --> H
 ```
 
 | Repo | Role |
