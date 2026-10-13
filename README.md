@@ -22,26 +22,23 @@ are in [docs/design.md](docs/design.md).
 3. Fail the run if `sha` is not on the source's `main`, as the demo's `deploy.yml` does.
 4. Ask an org owner to add the repo to the app installation.
 
-**Source:** add a job after the tests, with `id-token: write` on that job only. `shell: bash` is needed, so a
-failed call fails the step:
+**Source:** add a job after the tests, with `id-token: write` on that job only:
 
 ```yaml
   trigger-deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && github.repository_owner == 'entur'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [test]
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
     permissions:
       id-token: write
     steps:
-      - shell: bash
-        run: |
-          jwt=$(curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=entur-dispatch-relay" | jq -r .value)
-          curl -sSf -X POST -H "Authorization: Bearer $jwt" -H "User-Agent: entur-dispatch-$GITHUB_REPOSITORY" \
-            -d '{"target":"entur/<app>-deployment-config","workflow":"deploy.yml"}' \
-            https://<relay>/v1/dispatch | jq -r '"Deploy run: \(.run_url)"' >> "$GITHUB_STEP_SUMMARY"
+      - uses: entur/dispatch-relay@<sha>
+        with:
+          target: entur/<app>-deployment-config
+          # workflow: deploy.yml (default)
 ```
+
+Pin the action by commit SHA. It fetches the job's OIDC token and posts it to the relay; see `action.yml`.
 
 **A 403** carries no reason. Find it in the relay's log by the source run id:
 `gcloud logging read 'jsonPayload.run_id="<run id>"' --project <relay project>`, or ask team-ror.

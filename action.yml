@@ -1,0 +1,32 @@
+name: Dispatch deploy
+description: "Trigger a workflow in a private repo through dispatch-relay. The job needs `permissions: id-token: write`."
+
+inputs:
+  target:
+    description: Target repo, e.g. entur/<app>-deployment-config
+    required: true
+  workflow:
+    description: Workflow file in the target
+    default: deploy.yml
+  relay-url:
+    description: Relay base URL
+    default: https://dispatch-relay-510132560124.europe-west1.run.app
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        WORKFLOW: ${{ inputs.workflow }}
+        RELAY_URL: ${{ inputs.relay-url }}
+      run: |
+        if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+          echo "::error::the job needs permissions: id-token: write"
+          exit 1
+        fi
+        jwt=$(curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=entur-dispatch-relay" | jq -r .value)
+        body=$(jq -nc --arg t "$TARGET" --arg w "$WORKFLOW" '{target: $t, workflow: $w}')
+        curl -sSf -H "Authorization: Bearer $jwt" -H "User-Agent: entur-dispatch-$GITHUB_REPOSITORY" \
+          -d "$body" "$RELAY_URL/v1/dispatch" | jq -r '"Deploy run: \(.run_url)"' | tee -a "$GITHUB_STEP_SUMMARY"
