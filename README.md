@@ -88,18 +88,17 @@ flowchart TD
    ```
 2. Declare both `workflow_dispatch` inputs, `sha` and `source_run_url`. GitHub rejects the dispatch with 422 if
    either is missing.
-3. Fail the run if `sha` is not on the source's `main`. The demo target's check:
+3. Fail the run if `sha` is not on the source's `main`:
    ```yaml
-       env:
-         SHA: ${{ inputs.sha }}
-         SOURCE_REPO: entur/dispatch-demo-app
-         GH_TOKEN: ${{ github.token }}
        steps:
-         - run: |
-             [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid sha"; exit 1; }
-             status=$(gh api "repos/$SOURCE_REPO/compare/$SHA...main" --jq .status)
-             [[ "$status" == identical || "$status" == ahead ]] || { echo "$SHA is not on main ($status)"; exit 1; }
+         - uses: entur/dispatch-relay/.github/actions/verify-sha@<sha>
+           with:
+             sha: ${{ inputs.sha }}
+             source-repo: entur/<app>
+             # token: needed if the source repo is not public
    ```
+   Targets that check out the source anyway can use `git merge-base --is-ancestor "$SHA" origin/main` and fail on
+   it instead.
 4. Install the app on the repo. Repo admins can do this; if org owners have restricted it, it becomes a request
    for them to approve.
 
@@ -113,13 +112,13 @@ flowchart TD
     permissions:
       id-token: write
     steps:
-      - uses: entur/dispatch-relay@<sha>
+      - uses: entur/dispatch-relay/.github/actions/dispatch@<sha>
         with:
           target: entur/<app>-deployment-config
           # workflow: deploy.yml (default)
 ```
 
-Pin the action by commit SHA. It fetches the job's OIDC token and posts it to the relay; see `action.yml`.
+Pin the action by commit SHA. It fetches the job's OIDC token and posts it to the relay; see `.github/actions/dispatch/action.yml`.
 
 **A 403** carries no reason. Find it in the relay's log by the source run id:
 `gcloud logging read 'jsonPayload.run_id="<run id>"' --project <relay project>`, or ask team-ror.

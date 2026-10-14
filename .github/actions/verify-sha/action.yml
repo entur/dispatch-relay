@@ -1,0 +1,31 @@
+name: Verify SHA
+description: Fail unless the SHA is a full commit SHA on the given branch of the source repo.
+
+inputs:
+  sha:
+    description: Commit to verify, usually inputs.sha from the relay
+    required: true
+  source-repo:
+    description: Source repo, e.g. entur/<app>
+    required: true
+  branch:
+    description: Branch that must contain the commit
+    default: main
+  token:
+    description: Token that can read the source repo; the default only works for public sources
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+        SOURCE_REPO: ${{ inputs.source-repo }}
+        BRANCH: ${{ inputs.branch }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::invalid sha: $SHA"; exit 1; }
+        status=$(gh api "repos/$SOURCE_REPO/compare/$SHA...$BRANCH" --jq .status)
+        [[ "$status" == identical || "$status" == ahead ]] || { echo "::error::$SHA is not on $SOURCE_REPO $BRANCH ($status)"; exit 1; }
+        echo "$SHA is on $SOURCE_REPO $BRANCH"
