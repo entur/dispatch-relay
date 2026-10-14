@@ -138,7 +138,7 @@ It is installed on selected `*-deployment-config` repos.
 ## 8. MVP results (2026-10-13)
 
 Setup: the relay in `ent-dispatch-dev`, a personal app, the demo source `entur/dispatch-demo-app` (public, moved
-from a personal account with its repo id unchanged) and the demo target `henrik242/dispatch-demo-deploy`
+from a personal account with its repo id unchanged) and the demo target `henrik242/dispatch-demo-app-deployment-config`
 (private).
 
 A push to the demo app's `main` produced the deploy run within about 15 s, with the right `sha` and

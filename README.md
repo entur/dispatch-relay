@@ -33,12 +33,41 @@ flowchart TD
     G --> H
 ```
 
+## How it works
+
+1. A push to `main` in the source repo runs its workflow, and the tests pass.
+2. The `trigger-deploy` job, the only job with `id-token: write`, asks GitHub for an OIDC token with audience
+   `entur-dispatch-relay`. GitHub signs it; it names the repo, workflow, branch, event, commit and run.
+3. The job posts the token and `{target, workflow}` to the relay.
+4. The relay checks the token: signature against GitHub's keys, issuer, audience, expiry, owner org, runner and
+   SHA format. Otherwise 403.
+5. The relay signs a short JWT with the app's private key and gets an installation token for the target repo
+   only.
+6. With it, the relay reads `.github/dispatch-sources.yml` from the target's default branch. The source repo id,
+   workflow file, branch and event must be listed for the requested workflow. Otherwise 403.
+7. The relay starts the target workflow on the ref from the allowlist, with `sha` and `source_run_url` from the
+   token.
+8. GitHub returns the new run's URL. The relay logs one line and returns `{run_url}`, which the job prints.
+9. The target workflow checks that `sha` is on the source's `main`, then deploys, with its own approvals.
+
+## Who holds what
+
+| Party | Holds | Permissions |
+|---|---|---|
+| Source repo (`entur/dispatch-demo-app`, public) | No secrets. The variable `DISPATCH_RELAY_URL`. | Workflow: `contents: read`. `trigger-deploy` job: `id-token: write` only. It can ask, but can't choose the SHA, ref or inputs. |
+| Relay (Cloud Run, `ent-dispatch-dev`) | The app's private key, from Secret Manager | Service account: `secretAccessor` on `dispatch-relay-app-key`, nothing else. Public endpoint; auth is the token check. |
+| GitHub App | Its private key, only in the relay | Repository: Actions write, Single file read (`.github/dispatch-sources.yml`), Metadata read. No org permissions, no webhook. Installed on target repos only. Each request gets one token for one repo, valid 1 h, never stored. |
+| Target repo (`henrik242/dispatch-demo-app-deployment-config`, private) | The allowlist and `deploy.yml` | `deploy.yml`: `contents: read`; its `GITHUB_TOKEN` reads the public source to check the SHA. Only writers to this repo can change the allowlist. |
+| Org owner | The app settings | Creates the app and chooses which repos it is installed on. |
+
+## Repos
+
 | Repo | Role |
 |---|---|
 | `entur/dispatch-relay` | this service |
 | `entur/dispatch-relay-deployment-config` | GCP project, deploy script, plan |
 | `entur/dispatch-demo-app` | demo source: `build.yml` triggers, `probe.yml` exercises rejections |
-| `henrik242/dispatch-demo-deploy` | demo target: `deploy.yml` and the allowlist |
+| `henrik242/dispatch-demo-app-deployment-config` | demo target: `deploy.yml` and the allowlist |
 
 ## Onboard a repo
 
