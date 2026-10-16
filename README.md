@@ -82,7 +82,7 @@ flowchart TD
        sources:
          - repository: entur/dispatch-demo-app     # informational
            repository_id: 1416824088               # authoritative: gh api repos/entur/dispatch-demo-app --jq .id
-           workflow: .github/workflows/build.yml   # calling workflow in the source, full path
+           workflow: .github/workflows/build.yml   # calling workflow, full path; omit to allow any
            refs: [refs/heads/main]                 # source refs allowed to trigger
            events: [push]
    ```

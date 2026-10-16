@@ -235,3 +235,26 @@ func toJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+func TestMatchAnyWorkflow(t *testing.T) {
+	m, err := parseManifest([]byte(`version: 1
+workflows:
+  deploy.yml:
+    ref: main
+    sources:
+      - repository_id: 42
+        refs: [refs/heads/main]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &claims{RepositoryID: "42", Repository: "o/r", Ref: "refs/heads/main", EventName: "push",
+		WorkflowRef: "o/r/.github/workflows/other.yml@refs/heads/main"}
+	if _, err := m.match("deploy.yml", c); err != nil {
+		t.Errorf("any workflow: %v", err)
+	}
+	c.Ref = "refs/heads/x"
+	if _, err := m.match("deploy.yml", c); err == nil {
+		t.Error("other branch allowed")
+	}
+}

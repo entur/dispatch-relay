@@ -64,7 +64,7 @@ Alternatives considered:
   this check matters.
 - **Branch and runner:** `ref_type == branch`, `runner_environment == github-hosted`.
 - **SHA:** must match `^[0-9a-f]{40}$`.
-- **Manifest match:** `repository_id` (numeric, so it survives renames and blocks name reuse), `workflow_ref`,
+- **Manifest match:** `repository_id` (numeric, so it survives renames and blocks name reuse), `workflow_ref` (if listed),
   `ref` and `event_name`.
 
 All of these run before any GitHub call.
@@ -92,7 +92,7 @@ workflows:
     sources:
       - repository: entur/<app>     # informational
         repository_id: <numeric id> # authoritative
-        workflow: .github/workflows/build.yml
+        workflow: .github/workflows/build.yml # optional; omit to allow any workflow
         refs: [refs/heads/main]
         events: [push]              # default
 ```
@@ -118,8 +118,8 @@ It is installed on selected `*-deployment-config` repos.
 | Threat | Impact | Mitigation |
 |---|---|---|
 | Compromised workflow, or any writer, on the source `main` | Deploys a commit that is on `main`, as with the PAT. A force-push to an older commit, or re-running an old push run (up to 30 days), redeploys an older SHA. | A ruleset on the source `main`: PR, review, no force-push. The target's "SHA is on main" check and tst/prd approvals. |
-| Other jobs in the source workflow | `workflow_ref` pins the file, not the job. Any job in it with `id-token: write`, including a called reusable workflow, can mint a valid token. | Grant `id-token: write` on the trigger job only. |
-| Malicious fork PR | No token with `ref=main` and `event=push`. | `events: [push]` rejects `pull_request*`, `workflow_run` and `issue_comment`. The pinned `workflow_ref` covers `pull_request_target`. |
+| Other jobs or workflows in the source | `workflow_ref` pins the file, not the job. Any job in it with `id-token: write`, including a called reusable workflow, can mint a valid token. Without `workflow` in the allowlist, so can any workflow on the listed refs and events. | Grant `id-token: write` on the trigger job only. Pin `workflow` in source repos with many workflows or third-party actions. |
+| Malicious fork PR | No token with `ref=main` and `event=push`. | `events: [push]` rejects `pull_request*`, `workflow_run` and `issue_comment`. `pull_request_target` is rejected by the same rule. |
 | Compromised shared action | It could steal a token, which works only against the relay, for about 5 min. | The only actions in the path are this repo's, under `.github/actions/`, owned with the relay and pinned by SHA. |
 | Replayed token | Re-dispatch within about 6 min, possibly a rollback (section 3). | Target approvals. |
 | Leaked app key | On installed targets: dispatch any workflow, on any branch, with any inputs; cancel, delete or disable runs and workflows. No content write. A target that builds whatever `ref` it is given turns this into code execution with CI credentials. | Selected-repo install. Only the runtime service account can read the secret. Delete the local `.pem` after upload. Targets fail hard when the SHA isn't on main. Rotate on suspicion. |

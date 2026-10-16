@@ -23,7 +23,7 @@ type workflowEntry struct {
 type source struct {
 	Repository   string   `yaml:"repository"` // informational
 	RepositoryID int64    `yaml:"repository_id"`
-	Workflow     string   `yaml:"workflow"`
+	Workflow     string   `yaml:"workflow"` // empty: any workflow
 	Refs         []string `yaml:"refs"`
 	Events       []string `yaml:"events"`
 }
@@ -57,7 +57,7 @@ func (m *manifest) match(workflow string, c *claims) (string, error) {
 			events = []string{"push"}
 		}
 		switch {
-		case c.WorkflowRef != c.Repository+"/"+s.Workflow+"@"+c.Ref:
+		case s.Workflow != "" && c.WorkflowRef != c.Repository+"/"+s.Workflow+"@"+c.Ref:
 			err = reject("workflow_ref %q not allowed", c.WorkflowRef)
 		case !slices.Contains(s.Refs, c.Ref):
 			err = reject("ref %q not allowed", c.Ref)
